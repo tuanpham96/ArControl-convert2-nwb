@@ -725,7 +725,7 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
     
     :return: TrialsTable generate and added to the nwbfile
     """
-    # TODO: assess if there are side effects of duplicate table being added to both `nwbfile.files` and `nwbfile.acquisition`
+    # TODO: assess if there are side effects of duplicate table being added to both `nwbfile.trials` and `nwbfile.acquisition`
     assert not (add_to_trials and add_to_acquisition), \
         'And cannot support both `add_to_trials` and `add_to_acquisition` to be `True` to have duplicate table at the moment.' 
     
