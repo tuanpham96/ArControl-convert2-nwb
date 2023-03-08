@@ -1,0 +1,11 @@
+name: arcontrol-utils
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - nodejs
+  - graphviz
+  - pip:
+      - git+https://github.com/chenxinfeng4/ArControl-convert2-smcat.git
