@@ -134,7 +134,7 @@ def arc2dict(arc_data_filename: str,
                 if MAT['info'].get(state['name'], None) is None:
                     MAT['info'][state['name']] = {'label': state.get('label', None)}
                 MAT['info'][state['name']]['type'] = state.get('type', None)
-                MAT['info'][state['name']]['actions'] = str(state['actions']) if 'actions' in state else None
+                MAT['info'][state['name']]['actions'] = state.get('actions', [])
                 # recurse if necessary
                 if state.get('statemachine', None) is not None:
                     annotate_states(in_states=state['statemachine']['states'])
@@ -161,7 +161,8 @@ def convert(
         nwb_filename: str = None,
         append_to_nwb_file: bool = False,
         use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
-        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
+        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE,
+        ndx_beadl_cfg: dict = dict()):
     """
     Convert an ARControl recording to NWB
 
@@ -173,6 +174,7 @@ def convert(
     :param append_to_nwb_file: If the NWB file exists, should we append to it (True) or overwrite the file (False)
     :param use_behavioral_time_series: Boolean indicating whether to use behavioral timeseries to store the data
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension in NWB
+    :param ndx_beadl_cfg: Additional configurations to use ndx-beadl extension (Default: dict())
 
     :return: Path of the nwb
     """
@@ -186,7 +188,8 @@ def convert(
             append_to_nwb_file=append_to_nwb_file,
             MAT=MAT,
             use_behavioral_time_series=use_behavioral_time_series,
-            use_ndx_beadl=use_ndx_beadl)
+            use_ndx_beadl=use_ndx_beadl,
+            ndx_beadl_cfg=ndx_beadl_cfg)
 
     return filename
 
@@ -274,7 +277,9 @@ def add_arc_to_nwbfile(
         MAT: dict,
         nwbfile: NWBFile,
         use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
-        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
+        use_ndx_beadl: bool = NDX_BEADL_AVAILABLE,
+        ndx_beadl_cfg: dict = dict()
+    ):
     """
     Add data to an in-memory NWBFile object. The input nwbfile object is modified but
     writing the data to disk is left (if desired) is left to the caller.
@@ -283,7 +288,8 @@ def add_arc_to_nwbfile(
     :param nwbfile: The NWBFile object to add the data to
     :param use_behavioral_time_series: Boolean indicating whether to use behavioral timeseries to store the data
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
-
+    :param ndx_beadl_cfg: Additional configurations to use ndx-beadl extension (Default: dict())
+    
     :return: The modified nwbfile object
     """
     if use_ndx_beadl and not NDX_BEADL_AVAILABLE:
@@ -291,7 +297,9 @@ def add_arc_to_nwbfile(
                          "Install the extension and try again or set use_ndx_beadl=False")
     if not use_ndx_beadl and not use_behavioral_time_series:
         raise ValueError("Either use_ndx_beadl and/or use_behavioral_time_series must be set to True")
-
+    if use_ndx_beadl and use_behavioral_time_series:
+        raise ValueError("Cannot have both use_ndx_beadl and use_behavioral_time_series being True")
+    
     session_start_time = MAT['info']['session_start_time']
     # task_name = MAT['info']['task']
     task_program = MAT['info']['task_program_xml']
@@ -335,7 +343,8 @@ def add_arc_to_nwbfile(
             io_in_events=io_in_events,
             io_out_actions=io_out_actions,
             cs_events=cs_events,
-            time_offset=time_offset
+            time_offset=time_offset,
+            **ndx_beadl_cfg
         )
 
     return nwbfile
@@ -349,6 +358,7 @@ def __add_arc_to_nwbfile_behavioral_series(nwbfile: NWBFile,
                                            time_offset: float):
     """
     Add the data to the NWBFile using BehavioralTimeSeries and TimeIntervals
+    Note: this is the original code from `arcontrol2nwb` without using `ndx-beadl`
     """
     world_event = (io_in_events | io_out_actions | cs_events)
     assert world_event.keys() <= info.keys()
@@ -450,16 +460,39 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
     state_types_table.add_column(name='state_label', description='ARControl control state label')
     if has_task_json:
         state_types_table.add_column(name='state_type', description='ARControl control state type')
-        state_types_table.add_column(name='state_actions', description='ARControl actions associated with the state')
+        state_types_table.add_column(
+            name='state_action',
+            description='ARControl action (comment) list associated with the state', 
+            index=True
+        )
+        state_types_table.add_column(
+            name='state_action_type',
+            description='ARControl action type list associated with the state', 
+            index=True
+        )
+        
     for state_name, state_meta in state_types.items():
+        state_label = state_meta.get('label', '')
         if has_task_json:
-            state_types_table.add_row(state_name=state_name,
-                                      state_label=state_meta['label'] if 'label' in state_meta else '',
-                                      state_type=state_meta['type'] if 'type' in state_meta else '',
-                                      state_actions=state_meta['actions'] if 'acions' in state_meta else '')
+            state_type = state_meta.get('type', '')
+            
+            state_actions = state_meta.get('actions', [])
+            state_action_types = [a.get('type', '') for a in state_actions]
+            state_action_descs = [a.get('body', '') for a in state_actions]
+            
+            state_types_table.add_row(
+                state_name=state_name,
+                state_label=state_label,
+                state_type=state_type,
+                state_action=state_action_descs,
+                state_action_type=state_action_types
+            )
+            
         else:
-            state_types_table.add_row(state_name=state_name,
-                                      state_label=state_meta['label'] if 'label' in state_meta else '')
+            state_types_table.add_row(
+                state_name=state_name,
+                state_label=state_label
+            )
 
     # define the events types table
     event_types_table = EventTypesTable(description="ARControl input events")
@@ -490,7 +523,8 @@ def __add_ndx_beadl_task(nwbfile: NWBFile,
 def __add_ndx_beadl_events(nwbfile: NWBFile,
                            event_types_table: EventTypesTable,
                            io_in_events: dict,
-                           time_offset: float):
+                           time_offset: float,
+                           add_to_acquisition: bool = True):
     """
     Add the EventsTable data to the NWBFile using the NDX BEADL extension
 
@@ -498,6 +532,7 @@ def __add_ndx_beadl_events(nwbfile: NWBFile,
     :param event_types_table: The EventTypesTable from the nwbfile to link to
     :param io_in_events: Dictionary with all io input events
     :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+    :param add_to_acquisition: add to `nwbfile.acquisition`. (Default:True)
 
     :return: EventsTable generate and added to the nwbfile
     """
@@ -541,14 +576,16 @@ def __add_ndx_beadl_events(nwbfile: NWBFile,
                             description="ARControl duration of the input event")]
     )
     # add the events table to the file and return
-    nwbfile.add_acquisition(events_table)
+    if add_to_acquisition:
+        nwbfile.add_acquisition(events_table)
     return events_table
 
 
 def __add_ndx_beadl_actions(nwbfile: NWBFile,
                             action_types_table: ActionTypesTable,
                             io_out_actions: dict,
-                            time_offset: float):
+                            time_offset: float,
+                            add_to_acquisition: bool = True):
     """
     Add the ActinsTable data to the NWBFile using the NDX BEADL extension
 
@@ -556,6 +593,7 @@ def __add_ndx_beadl_actions(nwbfile: NWBFile,
     :param event_types_table: The EventTypesTable from the nwbfile to link to
     :param io_out_actions: Dictionary with all io output actions
     :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+    :param add_to_acquisition: add to `nwbfile.acquisition`. (Default:True)
 
     :return: ActionsTable generate and added to the nwbfile
     """
@@ -599,14 +637,16 @@ def __add_ndx_beadl_actions(nwbfile: NWBFile,
                             description="ARControl duration of the output action.")]
 
     )
-    nwbfile.add_acquisition(actions_table)
+    if add_to_acquisition:
+        nwbfile.add_acquisition(actions_table)
     return actions_table
 
 
 def __add_ndx_beadl_states(nwbfile: NWBFile,
                            state_types_table: StateTypesTable,
                            cs_events: dict,
-                           time_offset: float):
+                           time_offset: float,
+                           add_to_acquisition: bool = True):
     """
     Add the StatesTable data to the NWBFile using the NDX BEADL extension
 
@@ -614,6 +654,7 @@ def __add_ndx_beadl_states(nwbfile: NWBFile,
     :param state_types_table: The StateTypesTable from the nwbfile to link to
     :param cs_events: Dictionary with all control states
     :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
+    :param add_to_acquisition: add to `nwbfile.acquisition`. (Default:True)
 
     :return: ActionsTable generate and added to the nwbfile
     """
@@ -657,7 +698,8 @@ def __add_ndx_beadl_states(nwbfile: NWBFile,
                                                 "This is represented as a reference to a row "
                                                 "of the StateTypesTable.")]
     )
-    nwbfile.add_acquisition(states_table)
+    if add_to_acquisition:
+        nwbfile.add_acquisition(states_table)
     return states_table
 
 
@@ -666,7 +708,9 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
                            events_table: EventsTable,
                            actions_table: ActionsTable,
                            cs_events: dict,
-                           time_offset: float):
+                           time_offset: float,
+                           add_to_trials: bool = True,
+                           add_to_acquisition: bool = False):
     """
     Add the TrialsTable data to the NWBFile using the NDX BEADL extension
 
@@ -676,16 +720,32 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
     :param actions_table: The ActionsTable from the nwbfile
     :param cs_events: Dictionary with all control states
     :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
-
+    :param add_to_trials: add to `nwbfile.trials`. (Default:True)
+    :param add_to_acquisition: add to `nwbfile.acquisition`. (Default:False)
+    
     :return: TrialsTable generate and added to the nwbfile
     """
+    # TODO: assess if there are side effects of duplicate table being added to both `nwbfile.files` and `nwbfile.acquisition`
+    assert not (add_to_trials and add_to_acquisition), \
+        'And cannot support both `add_to_trials` and `add_to_acquisition` to be `True` to have duplicate table at the moment.' 
+    
+    # TODO: deal with the case where `nwbfile.trials` already exists and we need to add to it
+    if add_to_trials and nwbfile.trials is not None:
+        raise NotImplementedError(
+            'Currently not supported adding ARControl trial/component table to existing `nwbfile.trials`. '\
+            'Use `add_to_trials=False, add_to_acquisition=True` instead.'
+        )
+            
     event_timestamps = events_table['timestamp']
     action_timestamps = actions_table['timestamp']
     state_start_times = states_table['start_time']
 
     # create the trials table.
     # Here we treat components in ARControl as trials
-    trials_table = TrialsTable(description="ARControl behavioral trials ",
+    _meta_tbl = {'description': "ARControl behavioral trial/component table"}
+    if add_to_acquisition:
+        _meta_tbl.update({'name': 'components'})
+    trials_table = TrialsTable(**_meta_tbl, 
                                states_table=states_table,
                                events_table=events_table,
                                actions_table=actions_table)
@@ -743,8 +803,12 @@ def __add_ndx_beadl_trials(nwbfile: NWBFile,
         curr_state_start_index = curr_state_end_index
         curr_state_end_index = None
 
-    # TODO deal with the case where nwbfile.trials already exists and we need to add to it
-    nwbfile.trials = trials_table
+    if add_to_trials:
+        nwbfile.trials = trials_table
+    
+    if add_to_acquisition:
+        nwbfile.add_acquisition(trials_table)
+        
     return trials_table
 
 
@@ -758,7 +822,13 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
                                    io_in_events: dict,
                                    io_out_actions: dict,
                                    cs_events: dict,
-                                   time_offset: float):
+                                   time_offset: float,
+                                   add_events_to_acquisition: bool = True,
+                                   add_actions_to_acquisition: bool = True,
+                                   add_states_to_acquisition: bool = True,
+                                   add_to_trials: bool = True,
+                                   add_trials_to_acquisition: bool = False
+                                  ):
     """
     Add the data to the NWBFile using the NDX BEADL extension
 
@@ -773,7 +843,12 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
     :param io_out_actions: Dictionary with all io output actions
     :param cs_events: Dictionary with all control states
     :param time_offset: Offset in seconds to apply to timesteps to align with the reference time of the NWB file
-
+    :param add_events_to_acquisition: Add EventsTable to acquisition (Default:True)
+    :param add_actions_to_acquisition: Add ActionsTable to acquisition (Default:True)
+    :param add_states_to_acquisition: Add StatesTable to acquisition (Default:True)
+    :param add_to_trials: Add TrialsTable to NWBFile object (Default:True)
+    :param add_trials_to_acquisition: Add TrialsTable to acquisition (Default:False)
+    
     :returns: Tuple with all main objects added to the nwbfile by the function containing:
               1) task, 2) event_types, 3) action_types, 4) state_types, 5) events_table,
               6) actions_table, 7) states_table, 8) trials_table
@@ -804,21 +879,27 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         nwbfile=nwbfile,
         event_types_table=event_types_table,
         io_in_events=io_in_events,
-        time_offset=time_offset)
+        time_offset=time_offset,
+        add_to_acquisition=add_events_to_acquisition        
+    )
 
     # Add the ActionsTable with the event recordings
     actions_table = __add_ndx_beadl_actions(
         nwbfile=nwbfile,
         action_types_table=action_types_table,
         io_out_actions=io_out_actions,
-        time_offset=time_offset)
+        time_offset=time_offset,
+        add_to_acquisition=add_actions_to_acquisition        
+    )
 
     # Add the ActionsTable with the event recordings
     states_table = __add_ndx_beadl_states(
         nwbfile=nwbfile,
         state_types_table=state_types_table,
         cs_events=cs_events,
-        time_offset=time_offset)
+        time_offset=time_offset,
+        add_to_acquisition=add_states_to_acquisition
+    )
 
     # Add the TrialsTable with trial definitions
     trials_table = __add_ndx_beadl_trials(
@@ -827,7 +908,10 @@ def __add_arc_to_nwbfile_ndx_beadl(nwbfile: NWBFile,
         events_table=events_table,
         actions_table=actions_table,
         cs_events=cs_events,
-        time_offset=time_offset)
+        time_offset=time_offset,
+        add_to_trials=add_to_trials,
+        add_to_acquisition=add_trials_to_acquisition
+    )
 
     return (task,
             event_types,
@@ -843,7 +927,9 @@ def savenwb(MAT: dict,
             nwb_filename: str,
             append_to_nwb_file: bool = False,
             use_behavioral_time_series: bool = not NDX_BEADL_AVAILABLE,
-            use_ndx_beadl: bool = NDX_BEADL_AVAILABLE):
+            use_ndx_beadl: bool = NDX_BEADL_AVAILABLE,
+            ndx_beadl_cfg: dict = dict()
+           ):
     """
     Save the MAT data dict generated by the
 
@@ -857,6 +943,8 @@ def savenwb(MAT: dict,
     :param MAT: Dictionary generated by arc2dict function
     :param use_behavioral_time_series: Boolean indicating whether to use behavioral timeseries to store the data
     :param use_ndx_beadl: Boolean indicating whether to use the ndx-beadl extension
+    :param ndx_beadl_cfg: Additional configurations to use ndx-beadl extension (Default: dict())
+    
     """
     session_start_time = MAT['info']['session_start_time']
     task_name = MAT['info']['task']
@@ -881,7 +969,9 @@ def savenwb(MAT: dict,
         MAT=MAT,
         nwbfile=nwbfile,
         use_behavioral_time_series=use_behavioral_time_series,
-        use_ndx_beadl=use_ndx_beadl)
+        use_ndx_beadl=use_ndx_beadl,
+        ndx_beadl_cfg=ndx_beadl_cfg
+    )
 
     # write the NWBFile object to disk
     nwb_io.write(nwbfile)

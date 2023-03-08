@@ -5,5 +5,15 @@ setup(
     packages=find_packages(include=['arcontrol2nwb*']),
     url='https://github.com/chenxinfeng4/ArControl-convert2-nwb',
     author='chenxinfeng',
-    install_requires=['pynwb','numpy']
+    install_requires=[
+        'pynwb',
+        'numpy',
+        "ndx-beadl @ git+https://github.com/rly/ndx-beadl.git"
+    ],
+    extras_require={
+        'dev': [
+            'ipython',
+            'ipykernel',
+        ],
+    }
 )
